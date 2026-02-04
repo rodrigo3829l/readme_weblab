@@ -265,6 +265,93 @@ Archivos relevantes:
 - Controlador: `src/controllers/authController.js`
 - Servicio/logic: `src/services/authService.js`
 
+**Shared Auth (Login Compartido)**
+
+Esta API proporciona un login compartido para permitir que el frontend inicie una sesión global (un único usuario compartido) sin interferir con el login por `deviceId`. Se monta en la ruta base `/api/shared-auth`.
+
+- Nota de seguridad: las credenciales se configuran en el archivo `.env` con `SHARED_USER` y `SHARED_PASS`. Para mayor seguridad, define `JWT_SHARED_SECRET` en `.env`.
+
+Endpoints y formato JSON de respuesta
+
+1) Login compartido
+- Método: `POST`
+- Path: `/api/shared-auth/login`
+- Body JSON de ejemplo:
+```json
+{ "user": "wlteam@anfeta.com", "pass": "Anfeta2026" }
+```
+- Respuesta éxito (200) — JSON:
+```json
+{
+	"token": "<jwt_access_token>",
+	"refreshToken": "<jwt_refresh_token>"
+}
+```
+- Errores (ejemplos):
+```json
+{ "message": "Missing credentials" }            // 400
+{ "message": "Invalid credentials" }            // 401
+```
+
+2) Acceder a rutas protegidas (ejemplo)
+- Requisito: enviar el header `x-shared-token` con el `token` devuelto por `/login`.
+- Ejemplo de header:
+```
+x-shared-token: <jwt_access_token>
+```
+- Respuesta éxito típica (depende de la ruta):
+```json
+{
+	"success": true,
+	"data": { /* contenido según endpoint */ },
+	"shared": { "shared": true, "iat": 1670000000, "exp": 1670003600 }
+}
+```
+- Errores:
+```json
+{ "message": "Missing shared token" }            // 401
+{ "message": "Invalid or expired shared token" } // 401
+```
+
+3) Refresh token
+- Método: `POST`
+- Path: `/api/shared-auth/refresh`
+- Enviar el refresh token en el header `x-shared-refresh`:
+```
+x-shared-refresh: <jwt_refresh_token>
+```
+- Respuesta éxito (200) — JSON:
+```json
+{
+	"token": "<new_jwt_access_token>",
+	"refreshToken": "<new_jwt_refresh_token>"
+}
+```
+- Errores (ejemplos):
+```json
+{ "message": "Missing refresh token header" }   // 400
+{ "message": "Invalid or expired refresh token" } // 401
+```
+
+Uso en rutas existentes
+- El middleware `validateSharedToken` valida el header `x-shared-token` y añade `req.shared` cuando es válido. Ejemplo de uso en rutas: `router.post("/", validateSharedToken, handler)`.
+
+Pruebas rápidas (curl)
+```bash
+# Login
+curl -X POST http://localhost:4000/api/shared-auth/login \
+	-H "Content-Type: application/json" \
+	-d '{"user":"wlteam@anfeta.com","pass":"Anfeta2026"}'
+
+# Usar token en ruta protegida
+curl http://localhost:4000/api/actividades \
+	-H "x-shared-token: <token_aqui>"
+
+# Refresh
+curl -X POST http://localhost:4000/api/shared-auth/refresh \
+	-H "x-shared-refresh: <refresh_token_aqui>"
+```
+
 **Presence (online users)**
 
 Ruta base: `/api/presence`
@@ -1307,6 +1394,244 @@ Archivos relevantes:
 - Archivos relevantes:
 	- `src/server.js` (configuración de Socket.IO y handlers de `connection`)
 	- Controladores que emiten eventos: `src/controllers/actividadesController.js`, `src/controllers/proyectosController.js`, `src/controllers/revisionsController.js`, `src/controllers/correosController.js`, `src/controllers/finanzasController.js`, `src/controllers/notesController.js`, `src/controllers/interrupcionesController.js`, etc.
+
+
+
+**Feedback / Comentarios (API)**
+
+- Base path: `/api/feedback`
+
+- Propósito: permitir que usuarios (autenticados o anónimos) envíen comentarios y calificaciones (rating) sobre recursos genéricos identificados por `targetType` + `targetId`. Diseñado para escalar a cualquier tipo de "target" (páginas, productos, issues, etc.).
+
+- Modelo (resumen):
+	- `author` (opcional): `{ user, name, email }`
+	- `targetType` (string) — ejemplo: `page`, `product` (requerido)
+	- `targetId` (string) — id del recurso dentro del target. Para `targetType: "page"` este campo es opcional (feedback de la página completa).
+	- `comment` (string) — texto del comentario (requerido)
+	- `rating` (number) — 1..5 (requerido)
+	- `metadata` (object) — datos libres (opcional)
+	- `status` — `visible|hidden|archived` (para moderación)
+	- `ip`, `device`, `locale` — info de contexto capturada en creación
+
+Rutas y ejemplos (usar `qRUTA_BASE` como host base):
+
+1) Crear feedback
+- Método: POST
+- Path: `qRUTA_BASE/api/feedback`
+- Body (JSON):
+
+```json
+{
+	"targetType": "page",
+	"targetId": "page_abc123",
+	"comment": "Muy útil esta página",
+	"rating": 5,
+	"metadata": { "browser": "Chrome" },
+	"author": { "name": "Juan", "email": "juan@example.com" }
+}
+```
+
+- Headers recomendados:
+	- `Content-Type: application/json`
+	- `x-device-id`: opcional (identifica dispositivo)
+
+- Respuesta (201):
+
+```json
+{ "success": true, "data": { "_id": "...", "targetType": "page", "targetId": "page_abc123", "comment": "Muy útil...", "rating": 5, "createdAt": "..." } }
+```
+
+2) Listar feedback (filtros, paginación)
+- Método: GET
+- Path: `qRUTA_BASE/api/feedback`
+- Query params:
+	- `targetType` (opcional)
+	- `targetId` (opcional)
+	- `page` (opcional, default 1)
+	- `limit` (opcional, default 20)
+	- `minRating` (opcional, filtra >= valor)
+	- `sortBy` (opcional, default `createdAt`)
+	- `sortDir` (opcional, `asc` o `desc`)
+
+- Ejemplo:
+```
+GET qRUTA_BASE/api/feedback?targetType=page&targetId=page_abc123&page=1&limit=10
+```
+
+- Respuesta (200):
+
+```json
+{
+	"success": true,
+	"data": [ { "_id":"...","comment":"...","rating":5, "author":{...} } ],
+	"meta": { "total": 42, "page": 1, "limit": 10 }
+}
+```
+
+3) Obtener un feedback por id
+- Método: GET
+- Path: `qRUTA_BASE/api/feedback/:id`
+- Respuesta (200): `{ "success": true, "data": { ... } }` o 404 si no existe
+
+4) Actualizar feedback (moderación o corrección)
+- Método: PUT
+- Path: `qRUTA_BASE/api/feedback/:id`
+- Body: campos a actualizar (p. ej. `comment`, `rating`, `status`)
+- Respuesta (200): `{ "success": true, "data": { ...updated... } }`
+
+5) Eliminar feedback
+- Método: DELETE
+- Path: `qRUTA_BASE/api/feedback/:id`
+- Respuesta (200): `{ "success": true, "data": { ...deleted... } }`
+
+6) Listar comentarios por usuario (user id)
+- Método: GET
+- Path: `qRUTA_BASE/api/feedback/user/:userId`
+- Query params: `page`, `limit`, `sortBy`, `sortDir`
+- Respuesta (200):
+
+```json
+{ "success": true, "data": [ /* comentarios del usuario */ ], "meta": { "total": 5, "page": 1, "limit": 20 } }
+```
+
+7) Listar comentarios por email de autor
+- Método: GET
+- Path: `qRUTA_BASE/api/feedback/user-email?email=juan@example.com`
+- Respuesta (200): similar a la anterior
+
+Notas de integración y recomendaciones:
+- Use `targetType` + `targetId` para poder indexar y escalar a múltiples tipos de recursos sin cambiar schema.
+- Para endpoints de listado, el response incluye `meta` con `total`, `page` y `limit` para facilitar paginación en frontend.
+- Para moderación, actualizar `status` a `hidden` o `archived` para ocultar sin borrar la evidencia.
+- Campo `author.user` puede enlazar a `User` si existe la relación; si es anónimo, enviar sólo `author.name`/`email` opcional.
+- Se captura `ip`, `device` y `locale` en la creación para auditoría; `x-device-id` es recomendado en el header.
+
+Ejemplo completo de flujo (curl):
+
+Crear:
+```bash
+curl -X POST "qRUTA_BASE/api/feedback" -H "Content-Type: application/json" -d '{"targetType":"page","targetId":"page_abc123","comment":"Excelente","rating":5}'
+```
+
+Listar:
+```bash
+curl "qRUTA_BASE/api/feedback?targetType=page&targetId=page_abc123"
+```
+
+Archivos/implementación relevantes:
+- Modelo: `src/models/Feedback.js`
+- Servicio: `src/services/feedbackService.js`
+- Controlador: `src/controllers/feedbackController.js`
+- Rutas: `src/routes/feedbackRoutes.js`
+
+
+
+**WhatsApp: crear grupos y registro de teléfonos**
+
+- Base env: añade `WHATSAPP_BASE_URL` en tu `.env` (ej: `https://mi-whatsapp-service.example.com`).
+
+Endpoints añadidos en esta integración:
+
+- Crear grupo (proxy hacia el servicio externo):
+	- Método: POST
+	- Path: `/api/whatsapp/create-group`
+	- Middlewares: `touchRequest`, `ensureAwake` (implementación ligera)
+	- Body JSON mínimo:
+		- `name` (string) — obligatorio
+		- `participants` (array[string]) — opcional (ej: `"521234567890"` o `"521234567890@s.whatsapp.net"`)
+		- `mentionAll` (boolean) — opcional
+		- `welcomeMessage` (string) — opcional
+		- `notionId` (string) — opcional
+	- Respuestas: la API devuelve exactamente lo que el servicio remoto retorne. Errores 429 se manejan y devuelven `rate-overlimit`.
+
+- CRUD de clientes (nueva colección Mongo local `WhatsappClient`):
+	- Listar: `GET /api/whatsapp/clients` → devuelve `{ success: true, items: [...] }`
+	- Obtener: `GET /api/whatsapp/clients/:id` → `{ success: true, data: {...} }`
+	- Crear: `POST /api/whatsapp/clients` → `{ success: true, data: {...} }` (body example: `{ "name":"ACME","phones":["521234567890"] }`)
+	- Actualizar: `PUT /api/whatsapp/clients/:id`
+	- Eliminar: `DELETE /api/whatsapp/clients/:id`
+
+Notas de implementación:
+- `WHATSAPP_BASE_URL` debe apuntar a un servicio que implemente la ruta `POST /create-group` según la documentación de tu integrador.
+- El servicio `src/services/whatsappService.js` hace un `POST` a `${WHATSAPP_BASE_URL}/create-group` con el body recibido.
+- La colección `WhatsappClient` es independiente de Notion y sirve para almacenar números/metadata localmente; puedes replicar o sincronizar con Notion si lo deseas.
+
+Ejemplo rápido (crear grupo):
+```bash
+curl -X POST "http://localhost:4000/api/whatsapp/create-group" \
+	-H "Content-Type: application/json" \
+	-d '{"name":"Grupo de Prueba","participants":["521234567890"],"welcomeMessage":"Bienvenidos"}'
+```
+
+
+**Shared Auth — Uso Detallado**
+
+Esta sección explica cómo usar las rutas compartidas (`/api/shared-auth`) de forma segura desde el frontend o scripts de integración. NO incluyas credenciales reales en repositorios o logs.
+
+- Ruta base: `/api/shared-auth`
+
+- Endpoints principales:
+	- `POST /api/shared-auth/login` — Inicia sesión compartido.
+		- Qué enviar: `Content-Type: application/json` con body `{ "user": "<usuario>", "pass": "<password>" }`.
+		- Respuesta (200):
+			```json
+			{
+				"token": "<jwt_access_token>",
+				"refreshToken": "<jwt_refresh_token>"
+			}
+			```
+		- Errores comunes:
+			- `400` `{ "message": "Missing credentials" }`
+			- `401` `{ "message": "Invalid credentials" }`
+
+	- `POST /api/shared-auth/refresh` — Renueva tokens.
+		- Qué enviar: incluir el refresh token en el header `x-shared-refresh`.
+		- Header: `x-shared-refresh: <refresh_token>`
+		- Respuesta (200): `{ "token": "<new_jwt_access_token>", "refreshToken": "<new_jwt_refresh_token>" }`
+
+
+- Cómo usar el `token` en peticiones protegidas:
+	- Header esperado: `x-shared-token: <jwt_access_token>`
+	- Ejemplo curl (usar el token recibido en `/login`):
+		```bash
+		curl https://RUTA_BASE/api/actividades \
+			-H "x-shared-token: <jwt_access_token>"
+		```
+
+- Ejemplo paso a paso (curl) con placeholders:
+	1) Login (no subir estas credenciales a repositorios):
+		```bash
+		curl -X POST https://RUTA_BASE/api/shared-auth/login \
+			-H "Content-Type: application/json" \
+			-d '{"user":"your_shared_user@example.com","pass":"your_shared_password"}'
+		```
+		- Respuesta: guarda `token` y `refreshToken`.
+
+	2) Llamada a ruta protegida con `x-shared-token`:
+		```bash
+		curl https://RUTA_BASE/api/actividades -H "x-shared-token: <token_aqui>"
+		```
+
+	3) Renovar token cuando expira (usar `x-shared-refresh`):
+		```bash
+		curl -X POST https://RUTA_BASE/api/shared-auth/refresh -H "x-shared-refresh: <refreshToken_aqui>"
+		```
+
+- Uso desde JavaScript (fetch):
+	```javascript
+	// Login
+	const resp = await fetch('/api/shared-auth/login', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ user: 'your_shared_user@example.com', pass: 'your_shared_password' })
+	});
+	const { token } = await resp.json();
+
+	// Llamada protegida
+	await fetch('/api/actividades', { headers: { 'x-shared-token': token } });
+	```
+
+
 
 
 
