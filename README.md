@@ -1096,6 +1096,33 @@ curl -G "https://wlserver-production.up.railway.app/api/reportes/revisiones-por-
 { "success": true, "data": [ { "revisionId":"rv123","colaborador":"juan@example.com","dueStart":"2026-01-10T10:00:00-06:00" } ] }
 ```
 
+**Revisiones por fecha — Uso sencillo (ejemplos)**
+
+Usa la ruta `GET /api/reportes/revisiones-por-fecha` y envía una fecha o un rango. También puedes filtrar por colaborador usando `assignee` (email o id). Ejemplos con `localhost:4000`:
+
+- Fecha única:
+```bash
+curl -G "http://localhost:4000/api/reportes/revisiones-por-fecha" --data-urlencode "date=2026-02-04"
+```
+
+- Rango de fechas (start + end):
+```bash
+curl -G "http://localhost:4000/api/reportes/revisiones-por-fecha" --data-urlencode "start=2026-02-01" --data-urlencode "end=2026-02-04"
+```
+
+- Filtrar por colaborador (por email):
+```bash
+curl -G "http://localhost:4000/api/reportes/revisiones-por-fecha" \
+	--data-urlencode "date=2026-02-04" \
+	--data-urlencode "assignee=jjohn@pprin.com"
+```
+
+- Notas rápidas:
+	- El endpoint acepta `date=YYYY-MM-DD` o `start`+`end` (ISO/fecha).
+	- Para filtrar por colaborador puedes pasar `assignee` con el email (`jjohn@...`) o con el `idAsignee` (sin guiones).
+	- La respuesta mantiene el formato existente: `date|range`, `tz`, `totalRevisiones`, `colaboradores`.
+
+
 - Formato general de respuesta: normalmente `{ "success": true, "data": ... }` o `{ "success": false, "error": "..." }`.
 
 Archivos relevantes:
